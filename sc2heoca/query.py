@@ -80,7 +80,7 @@ def find_uni_genes(auc_de_res_exp, auc_de_res_ctrl, cutoff):
     return uni_genes
 
 class Query:
-    def __init__(self, model_dir, load_ref=False):
+    def __init__(self, model_dir, load_ref=False, subset_dict=None, subsample_col=None, as_many_cells_as=None):
 
         self.scpoli_model = f"{model_dir}/scpoli_model/"
         self.adata_latent_source = sc.read_h5ad(f"{model_dir}/adata_latent_source.h5ad")
@@ -88,8 +88,52 @@ class Query:
         self.empty_adata = sc.read_h5ad(f"{model_dir}/empty.h5ad")
         self.colorpalette = load_colorpalette()
 
+        self._subset_adata_latent_source(subset_dict)
+        self._subsample_adata_latent_source(subsample_col, as_many_cells_as)
+
         if load_ref:
             self.adata = sc.read_h5ad(f"{model_dir}/gut_scpoli_integration.h5ad")
+
+    def _subset_adata_latent_source(self, subset_dict=None):
+        """
+        Subset the adata_latent_source based on the subset_dict.
+        For example, if subset_dict is {'detail_tissue': ['colon']}, only colon cells will be kept.
+        """
+        if subset_dict is not None:
+            for key, values in subset_dict.items():
+                if isinstance(values, str):
+                    values = [values]
+                self.adata_latent_source = self.adata_latent_source[
+                    self.adata_latent_source.obs[key].isin(values)
+                ].copy()
+
+    def _subsample_adata_latent_source(self, subsample_col=None, as_many_cells_as=None):
+        """
+        Subsample each group in `subsample_col` to be at most as many cells as `as_many_cells_as`. 
+        (If a group has fewer cells, keep all of them)
+        For example, if `subsample_col` is 'level_2_late' and `as_many_cells_as` is 'colonocytes', 
+        then each cell_type in 'level_2_late' will be subsampled to be at most as many cells as 'colonocytes'.
+        """
+        if subsample_col is not None and as_many_cells_as is not None:
+            value_counts = self.adata_latent_source.obs[subsample_col].value_counts()
+            if as_many_cells_as not in value_counts.index:
+                raise ValueError(
+                    f"Group '{as_many_cells_as}' not found in column '{subsample_col}'."
+                )
+
+            n_cells_per_group = int(value_counts.loc[as_many_cells_as])
+            obs_df = self.adata_latent_source.obs
+            kept_obs_names = []
+            for _, df in obs_df.groupby(subsample_col):
+                n_keep = min(len(df), n_cells_per_group)
+                if n_keep == len(df):
+                    kept_obs_names.extend(df.index.tolist())
+                else:
+                    kept_obs_names.extend(
+                        df.sample(n=n_keep, random_state=0).index.tolist()
+                    )
+
+            self.adata_latent_source = self.adata_latent_source[kept_obs_names].copy()
 
     def run_scpoli(self, adata_query, sample_name=None):
         seed_everything(0)
