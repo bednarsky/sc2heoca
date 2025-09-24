@@ -80,14 +80,13 @@ def find_uni_genes(auc_de_res_exp, auc_de_res_ctrl, cutoff):
     return uni_genes
 
 class Query:
-    def __init__(self, model_dir, load_ref=False, n_neighbors=10):
+    def __init__(self, model_dir, load_ref=False):
 
         self.scpoli_model = f"{model_dir}/scpoli_model/"
         self.adata_latent_source = sc.read_h5ad(f"{model_dir}/adata_latent_source.h5ad")
         self.umap_model = pickle.load(open(f"{model_dir}/umap_model.sav", 'rb'))
         self.empty_adata = sc.read_h5ad(f"{model_dir}/empty.h5ad")
         self.colorpalette = load_colorpalette()
-        self.n_neighbors = n_neighbors
 
         if load_ref:
             self.adata = sc.read_h5ad(f"{model_dir}/gut_scpoli_integration.h5ad")
@@ -140,25 +139,32 @@ class Query:
         
         return adata_query
 
-    def _knn_label_transfer(self, adata_query, col_to_transfer):
+    def _knn_label_transfer(self, adata_query, col_to_transfer, n_neighbors=10):
         """ Do KNN prediction and add column to adata_query.obs inplace. """
         if col_to_transfer in self.adata_latent_source.obs.columns:
             self.adata_latent_source.obs[col_to_transfer] = self.adata_latent_source.obs[col_to_transfer].astype('str')
             knn = KNeighborsClassifier(n_neighbors=self.n_neighbors)
             knn.fit(self.adata_latent_source.to_df(), 
                     self.adata_latent_source.obs[col_to_transfer])
-            adata_query.obs[f'predict_{col_to_transfer}'] = knn.predict(adata_query.obsm['scpoli_latent'])
+            adata_query.obs[f'predict_{col_to_transfer}__knn{n_neighbors}'] = knn.predict(adata_query.obsm['scpoli_latent'])
         else: 
             warnings.warn(f"Skipping column {col_to_transfer}: Not found in adata_latent_source.obs.columns")
 
-    def scpoli_label_transfer(self, adata_query, 
+    def scpoli_label_transfer(self, adata_query, n_neighbors=(10,),
                               cols_to_transfer=('level_1_late', 'level_2_late', 'level_3_late', 'detail_tissue')):
+        """ 
+        n_neighbors: iterable of int (or int). Run for each of the values and append suffix to column name.
+        """
 
         que_embedding = self.umap_model.transform(adata_query.obsm['scpoli_latent'])
         adata_query.obsm['X_umap'] = que_embedding
 
-        for col in cols_to_transfer:
-            self._knn_label_transfer(adata_query, col)
+        if isinstance(n_neighbors, int):
+            n_neighbors = (n_neighbors,)
+
+        for n_neighbors in n_neighbors:
+            for col in cols_to_transfer:
+                self._knn_label_transfer(adata_query, col, n_neighbors)
 
         # predict dist
         knn = NearestNeighbors(n_neighbors=self.n_neighbors)
