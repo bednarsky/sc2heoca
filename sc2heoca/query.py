@@ -11,6 +11,7 @@ from scipy.io import mmread
 from scipy import sparse
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import NearestNeighbors
+import warnings
 
 import anndata
 import scanpy as sc
@@ -79,13 +80,14 @@ def find_uni_genes(auc_de_res_exp, auc_de_res_ctrl, cutoff):
     return uni_genes
 
 class Query:
-    def __init__(self, model_dir, load_ref=False):
+    def __init__(self, model_dir, load_ref=False, n_neighbors=10):
 
         self.scpoli_model = f"{model_dir}/scpoli_model/"
         self.adata_latent_source = sc.read_h5ad(f"{model_dir}/adata_latent_source.h5ad")
         self.umap_model = pickle.load(open(f"{model_dir}/umap_model.sav", 'rb'))
         self.empty_adata = sc.read_h5ad(f"{model_dir}/empty.h5ad")
         self.colorpalette = load_colorpalette()
+        self.n_neighbors = n_neighbors
 
         if load_ref:
             self.adata = sc.read_h5ad(f"{model_dir}/gut_scpoli_integration.h5ad")
@@ -138,74 +140,37 @@ class Query:
         
         return adata_query
 
-    def scpoli_label_transfer(self, adata_query):
+    def _knn_label_transfer(self, adata_query, col_to_transfer):
+        """ Do KNN prediction and add column to adata_query.obs inplace. """
+        if col_to_transfer in self.adata_latent_source.obs.columns:
+            self.adata_latent_source.obs[col_to_transfer] = self.adata_latent_source.obs[col_to_transfer].astype('str')
+            knn = KNeighborsClassifier(n_neighbors=self.n_neighbors)
+            knn.fit(self.adata_latent_source.to_df(), 
+                    self.adata_latent_source.obs[col_to_transfer])
+            adata_query.obs[f'predict_{col_to_transfer}'] = knn.predict(adata_query.obsm['scpoli_latent'])
+        else: 
+            warnings.warn(f"Skipping column {col_to_transfer}: Not found in adata_latent_source.obs.columns")
+
+    def scpoli_label_transfer(self, adata_query, 
+                              cols_to_transfer=('level_1_late', 'level_2_late', 'level_3_late', 'detail_tissue')):
 
         que_embedding = self.umap_model.transform(adata_query.obsm['scpoli_latent'])
         adata_query.obsm['X_umap'] = que_embedding
-        # adata_all = adata_ref.concatenate(adata_que, batch_key='query')
 
-        # # predict tissue
-        # knn = KNeighborsClassifier(n_neighbors=10)
-        # knn.fit(self.adata_latent_source.to_df(), 
-        #         self.adata_latent_source.obs.tissue)
-        # adata_query.obs['predict_tissue'] = knn.predict(adata_query.obsm['scpoli_latent'])
-
-        # knn_res = pd.DataFrame(knn.predict_proba(adata_query.obsm['scpoli_latent']))
-        # knn_res.columns=['prob_'+i for i in knn.classes_]
-        # knn_res.index=adata_query.obs.index
-
-        # adata_query.obs['predict_tissue'] = knn.predict(adata_query.obsm['scpoli_latent'])
-        # adata_query.obs = pd.merge(adata_query.obs, knn_res, left_index=True, right_index=True)
-
-        # predict level1
-        knn = KNeighborsClassifier(n_neighbors=10)
-        knn.fit(self.adata_latent_source.to_df(), 
-                self.adata_latent_source.obs.level_1_late)
-        adata_query.obs['predict_level_1'] = knn.predict(adata_query.obsm['scpoli_latent'])
-
-        # predict level2
-        knn = KNeighborsClassifier(n_neighbors=10)
-        knn.fit(self.adata_latent_source.to_df(), 
-                self.adata_latent_source.obs.level_2_late)
-        adata_query.obs['predict_level_2'] = knn.predict(adata_query.obsm['scpoli_latent'])
-
-        # # predict leiden
-        # knn = KNeighborsClassifier(n_neighbors=10)
-        # knn.fit(self.adata_latent_source.to_df(), 
-        #         self.adata_latent_source.obs['leiden_10.0'])
-        # adata_query.obs['predict_leiden'] = knn.predict(adata_query.obsm['scpoli_latent'])
-
-        # # predict leiden
-        # knn = KNeighborsClassifier(n_neighbors=10)
-        # knn.fit(self.adata_latent_source.to_df(), 
-        #         self.adata_latent_source.obs['leiden_20.0'])
-        # adata_query.obs['predict_leiden2'] = knn.predict(adata_query.obsm['scpoli_latent'])
-
-        # predict level3
-        knn = KNeighborsClassifier(n_neighbors=10)
-        knn.fit(self.adata_latent_source.to_df(), 
-                self.adata_latent_source.obs.level_3_late)
-        adata_query.obs['predict_level_3'] = knn.predict(adata_query.obsm['scpoli_latent'])
+        for col in cols_to_transfer:
+            self._knn_label_transfer(adata_query, col)
 
         # predict dist
-        knn = NearestNeighbors(n_neighbors=10)
+        knn = NearestNeighbors(n_neighbors=self.n_neighbors)
         knn.fit(self.adata_latent_source.to_df())
         knn_res = knn.kneighbors(adata_query.obsm['scpoli_latent'])
         mydist = pd.DataFrame(knn_res[0]).mean(1)
         adata_query.obs['mean_dist'] = mydist.tolist()
 
         # get neighbors
-        knn = NearestNeighbors(n_neighbors=10)
+        knn = NearestNeighbors(n_neighbors=self.n_neighbors)
         knn.fit(self.adata_latent_source.to_df())
         adata_knn_graph = knn.kneighbors_graph(adata_query.obsm['scpoli_latent'])
-
-        # predict detail_tissue
-        if "detail_tissue" in self.adata_latent_source.obs.columns:
-            self.adata_latent_source.obs.detail_tissue = self.adata_latent_source.obs.detail_tissue.astype('str')
-            knn = KNeighborsClassifier(n_neighbors=10)
-            knn.fit(self.adata_latent_source.to_df(), 
-                self.adata_latent_source.obs.detail_tissue)
-            adata_query.obs['predict_detail_tissue'] = knn.predict(adata_query.obsm['scpoli_latent'])
 
         ## all str columns become object type TODO
         for i in adata_query.obs.columns:
