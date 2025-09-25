@@ -187,7 +187,7 @@ class Query:
         """ Do KNN prediction and add column to adata_query.obs inplace. """
         if col_to_transfer in self.adata_latent_source.obs.columns:
             self.adata_latent_source.obs[col_to_transfer] = self.adata_latent_source.obs[col_to_transfer].astype('str')
-            knn = KNeighborsClassifier(n_neighbors=self.n_neighbors)
+            knn = KNeighborsClassifier(n_neighbors=n_neighbors)
             knn.fit(self.adata_latent_source.to_df(), 
                     self.adata_latent_source.obs[col_to_transfer])
             adata_query.obs[f'predict_{col_to_transfer}__knn{n_neighbors}'] = knn.predict(adata_query.obsm['scpoli_latent'])
@@ -211,14 +211,14 @@ class Query:
                 self._knn_label_transfer(adata_query, col, n_neighbors)
 
         # predict dist
-        knn = NearestNeighbors(n_neighbors=self.n_neighbors)
+        knn = NearestNeighbors(n_neighbors=n_neighbors)
         knn.fit(self.adata_latent_source.to_df())
         knn_res = knn.kneighbors(adata_query.obsm['scpoli_latent'])
         mydist = pd.DataFrame(knn_res[0]).mean(1)
         adata_query.obs['mean_dist'] = mydist.tolist()
 
         # get neighbors
-        knn = NearestNeighbors(n_neighbors=self.n_neighbors)
+        knn = NearestNeighbors(n_neighbors=n_neighbors)
         knn.fit(self.adata_latent_source.to_df())
         adata_knn_graph = knn.kneighbors_graph(adata_query.obsm['scpoli_latent'])
 
